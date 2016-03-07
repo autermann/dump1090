@@ -1,3 +1,4 @@
+#!/usr/bin/env python2
 import json
 from pprint import pprint
 from decimal import Decimal
