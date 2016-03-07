@@ -31,7 +31,13 @@ def pushAircraftUpdate(ac):
     if "lat" in ac:
         if c.logging:
             print("### Publishing on topic '"+ c.mqtt_topic +"': "+ acJson)
-        client.publish(c.mqtt_topic, acJson, 1, 0)
+        response = client.publish(c.mqtt_topic, acJson)
+        if response[0] == 0:
+            if c.logging:
+                print("___ message published")
+        else:
+            if c.logging:
+                print("!!! Publish failed: "+response[0])
     elif c.logging:
         print("### no location information for: "+acJson)
 
