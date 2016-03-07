@@ -17,6 +17,7 @@ parser.add_argument('-p', '--mqtt-port', help='the target port of the MQTT broke
 parser.add_argument('-m', '--mqtt-topic', help='the MQTT topic', default='adsb52n')
 parser.add_argument('-t', '--timeout', help='generic timeout for network communication', type=int, default=60)
 parser.add_argument('-d', '--dump1090-file', help='the dump1090 aircraft.json file', required=True)
+parser.add_argument('-l', '--logging', help='enable logging to stdout', type=bool, default=False)
 args = parser.parse_args(namespace=c)
 
 #global fields
@@ -27,10 +28,11 @@ def pushAircraftUpdate(ac):
     if "lat" in ac:
         ac["timestamp"] = int(time.time())
         acJson = json.dumps(ac)
-        print("### Publishing on topic '"+ c.mqtt_topic +"': "+ acJson)
+        if c.logging:
+            print("### Publishing on topic '"+ c.mqtt_topic +"': "+ acJson)
         client.publish(c.mqtt_topic, acJson, 1, 0)
-    #else:
-        #print(".... no location information for: "+json.dumps(ac))
+    elif c.logging:
+        print("### no location information for: "+acJson)
 
 def readAircraftFile():
     f = open(c.dump1090_file, 'r')
