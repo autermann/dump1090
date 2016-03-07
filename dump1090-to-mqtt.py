@@ -26,9 +26,9 @@ s = sched.scheduler(time.time, time.sleep)
 knownAircrafts = {}
 
 def pushAircraftUpdate(ac):
+    ac["timestamp"] = int(time.time())
+    acJson = json.dumps(ac)
     if "lat" in ac:
-        ac["timestamp"] = int(time.time())
-        acJson = json.dumps(ac)
         if c.logging:
             print("### Publishing on topic '"+ c.mqtt_topic +"': "+ acJson)
         client.publish(c.mqtt_topic, acJson, 1, 0)
