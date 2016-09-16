@@ -398,8 +398,11 @@ function draw_range_polygon(polygon) {
     RangeFeature = new google.maps.Polygon({
         geodesic: true,
         clickable: false,
-        fillColor: '#888888',
-        fillOpacity: 0.6,
+        fillColor: '#66c5e4',
+        fillOpacity: 0.5,
+        strokeColor: '#626250',
+        strokeOpacity: 0.5,
+        strokeWeight: 2,
         map: GoogleMap,
         paths: polygon.map(function(c) {
             return { lat: c[0], lng: c[1] };
