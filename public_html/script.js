@@ -37,7 +37,84 @@ var FetchPending = null;
 var MessageCountHistory = [];
 var MessageRate = 0;
 
+var range_updater = null;
+
+
 var NBSP='\u00a0';
+
+function create_range_updater(center_point, callback) {
+  var R = 6371e3;
+  var initialDistance = 1e-3;
+  var distances = new Array(360);
+  for (var i = 0; i < 360; ++i) {
+    distances[i] = initialDistance;
+  }
+
+  return function onNewPoint(point) {
+    var distance = getDistance(center_point, point);
+    var bearing = Math.round(getBearing(center_point, point)) % 360;
+    console.log("Distance:", distance, "Bearing:", bearing);
+    if (distances[bearing] < distance) {
+      distances[bearing] = distance;
+      callback(buildPolygon(center_point, distances));
+    }
+  };
+
+  function getPoint(start, bearing, distance) {
+    var brng = bearing * (Math.PI / 180);
+    var φ1 = start[0] * (Math.PI / 180);
+    var λ1 = start[1] * (Math.PI / 180);
+    var φ2 = Math.asin(Math.sin(φ1) * Math.cos(distance/R) +
+                       Math.cos(φ1) * Math.sin(distance/R) * Math.cos(brng));
+    var λ2 = λ1 + Math.atan2(Math.sin(brng) * Math.sin(distance/R) * Math.cos(φ1),
+                             Math.cos(distance/R) - Math.sin(φ1) * Math.sin(φ2));
+    lon = (λ2 / (Math.PI / 180) + 540) % 360 - 180;
+    lat = φ2 / (Math.PI / 180);
+    return [lat, lon];
+  }
+
+  function buildPolygon(center, distances) {
+    var points = distances.map(function(distance, bearing) {
+      return getPoint(center, bearing, distance);
+    });
+    points.push(points[0]);
+    return points;
+  }
+
+  function getDistance(p1, p2) {
+    var lat1 = p1[0];
+    var lon1 = p1[1];
+    var lat2 = p2[0];
+    var lon2 = p2[1];
+    var φ1 = lat1 * (Math.PI / 180);
+    var φ2 = lat2 * (Math.PI / 180);
+    var Δφ = (lat2-lat1) * (Math.PI / 180);
+    var Δλ = (lon2-lon1) * (Math.PI / 180);
+    var a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1)   * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  function getBearing(p1, p2) {
+    var lat1 = p1[0];
+    var lon1 = p1[1];
+    var lat2 = p2[0];
+    var lon2 = p2[1];
+    var φ1 = lat1 * (Math.PI / 180);
+    var φ2 = lat2 * (Math.PI / 180);
+    var λ1 = lon1 * (Math.PI / 180);
+    var λ2 = lon2 * (Math.PI / 180);
+    var y = Math.sin(λ2-λ1) * Math.cos(φ2);
+    var x = Math.cos(φ1) * Math.sin(φ2) -
+            Math.sin(φ1) * Math.cos(φ2) * Math.cos(λ2-λ1);
+    var bearing = Math.atan2(y, x) / (Math.PI / 180);
+
+    return (bearing + 360) % 360;
+
+  }
+}
 
 function processReceiverUpdate(data) {
 	// Loop through all the planes in the data packet
@@ -88,13 +165,17 @@ function processReceiverUpdate(data) {
 
                         plane.tr.addEventListener('click', selectPlaneByHex.bind(undefined,hex,false));
                         plane.tr.addEventListener('dblclick', selectPlaneByHex.bind(undefined,hex,true));
-                        
+
                         Planes[hex] = plane;
                         PlanesOrdered.push(plane);
 		}
 
 		// Call the function update
 		plane.updateData(now, ac);
+
+        if (range_updater && data.lat !== undefined && data.lon !== undefined) {
+            range_updater([data.lat, data.lon]);
+        }
 	}
 }
 
@@ -118,10 +199,10 @@ function fetchData() {
                         var plane = PlanesOrdered[i];
                         plane.updateTick(now, LastReceiverTimestamp);
                 }
-                
+
 		refreshTableInfo();
 		refreshSelected();
-                
+
                 if (ReceiverClock) {
                         var rcv = new Date(now * 1000);
                         ReceiverClock.render(rcv.getUTCHours(),rcv.getUTCMinutes(),rcv.getUTCSeconds());
@@ -134,7 +215,7 @@ function fetchData() {
                                 $("#update_error_detail").text("The data from dump1090 hasn't been updated in a while. Maybe dump1090 is no longer running?");
                                 $("#update_error").css('display','block');
                         }
-                } else { 
+                } else {
                         StaleReceiverCount = 0;
                         LastReceiverTimestamp = now;
                         $("#update_error").css('display','none');
@@ -186,7 +267,7 @@ function initialize() {
         }
 
         $("#loader").removeClass("hidden");
-        
+
         // Get receiver metadata, reconfigure using it, then continue
         // with initialization
         $.ajax({ url: 'data/receiver.json',
@@ -202,7 +283,7 @@ function initialize() {
                                 DefaultCenterLat = data.lat;
                                 DefaultCenterLon = data.lon;
                         }
-                        
+
                         Dump1090Version = data.version;
                         RefreshInterval = data.refresh;
                         PositionHistorySize = data.history;
@@ -310,6 +391,20 @@ function generic_gettile(template, coord, zoom) {
         return template.replace('{x}', coord.x).replace('{y}', coord.y).replace('{z}', zoom)
 }
 
+function draw_range_polygon(polygon) {
+    var geom = new ol.geom.Polygon([polygon.map(function(coordinate) {
+        return [coordinate[1], coordinate[0]];
+    })]).transform('EPSG:4326', 'EPSG:3857');
+
+    var feature = new ol.Feature({
+        geometry: geom
+    });
+    feature.setStyle(new ol.style.Style({
+        fill: new ol.style.Fill({ color: [150, 150, 150, 0.5] })
+    }));
+    StaticFeatures.setAt(StaticFeatures.getLength()-1, feature);
+}
+
 // Initalizes the map and starts up our timers to call various functions
 function initialize_map() {
         // Load stored map settings if present
@@ -322,6 +417,7 @@ function initialize_map() {
         if (SiteShow && (typeof SiteLat !==  'undefined') && (typeof SiteLon !==  'undefined')) {
 	        SitePosition = new google.maps.LatLng(SiteLat, SiteLon);
                 sortByDistance();
+            range_updater = create_range_updater([SiteLat, SiteLon], draw_range_polygon);
         } else {
 	        SitePosition = null;
                 PlaneRowTemplate.cells[6].style.display = 'none'; // hide distance column
@@ -432,7 +528,7 @@ function initialize_map() {
 
 	GoogleMap = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
 	GoogleMap.mapTypes.set("dark_map", styledMap);
-	
+
         // Define the extra map types
         for (var type in ExtraMapTypes) {
 	        GoogleMap.mapTypes.set(type, new google.maps.ImageMapType({
@@ -457,11 +553,11 @@ function initialize_map() {
                         }
                 }
         });
-    
+
         google.maps.event.addListener(GoogleMap, 'zoom_changed', function() {
                 localStorage['ZoomLvl']  = GoogleMap.getZoom();
         });
-	
+
         google.maps.event.addListener(GoogleMap, 'maptypeid_changed', function() {
                 localStorage['MapType'] = GoogleMap.getMapTypeId();
         });
@@ -472,7 +568,7 @@ function initialize_map() {
 	        'http://maps.google.com/mapfiles/kml/pal4/icon57.png',
             new google.maps.Size(32, 32),   // Image size
             new google.maps.Point(0, 0),    // Origin point of image
-            new google.maps.Point(16, 16)); // Position where marker should point 
+            new google.maps.Point(16, 16)); // Position where marker should point
 	    var marker = new google.maps.Marker({
                     position: SitePosition,
                     map: GoogleMap,
@@ -480,7 +576,7 @@ function initialize_map() {
                     title: SiteName,
                     zIndex: -99999
             });
-        
+
                 if (SiteCircles) {
                         for (var i=0;i<SiteCirclesDistances.length;i++) {
                                 drawCircle(marker, SiteCirclesDistances[i]); // in meters
@@ -539,7 +635,7 @@ function reaper() {
         for (var i = 0; i < PlanesOrdered.length; ++i) {
                 var plane = PlanesOrdered[i];
                 if (plane.seen > 300) {
-			// Reap it.                                
+			// Reap it.
                         //console.log("Reaping " + plane.icao);
                         //console.log("parent " + plane.tr.parentNode);
                         plane.tr.parentNode.removeChild(plane.tr);
@@ -588,12 +684,12 @@ function refreshSelected() {
         }
 
 	refreshPageTitle();
-       
+
         var selected = false;
 	if (typeof SelectedPlane !== 'undefined' && SelectedPlane != "ICAO" && SelectedPlane != null) {
     	        selected = Planes[SelectedPlane];
         }
-        
+
         if (!selected) {
                 $('#selected_infoblock').css('display','none');
                 $('#dump1090_infoblock').css('display','block');
@@ -610,12 +706,12 @@ function refreshSelected() {
 
                 return;
         }
-        
+
         $('#dump1090_infoblock').css('display','none');
         $('#selected_infoblock').css('display','block');
 
         $('#selected_flightaware_link').attr('href','http://flightaware.com/live/modes/'+selected.icao+'/redirect');
-        
+
         if (selected.flight !== null && selected.flight !== "") {
                 $('#selected_callsign').text(selected.flight);
                 $('#selected_links').css('display','inline');
@@ -653,7 +749,7 @@ function refreshSelected() {
         } else {
                 $('#selected_squawk').text(selected.squawk);
         }
-	
+
         $('#selected_speed').text(format_speed_long(selected.speed));
         $('#selected_icao').text(selected.icao.toUpperCase());
         $('#airframes_post_icao').attr('value',selected.icao);
@@ -692,7 +788,7 @@ function refreshSelected() {
                         $('#selected_follow').css('font-weight', 'normal');
                 }
 	}
-        
+
         $('#selected_sitedist').text(format_distance_long(selected.sitedist));
         $('#selected_rssi').text(selected.rssi.toFixed(1) + ' dBFS');
 }
@@ -723,11 +819,11 @@ function refreshTableInfo() {
 			}
 			if (tableplane.icao == SelectedPlane)
                                 classes += " selected";
-                        
+
                         if (tableplane.squawk in SpecialSquawks) {
                                 classes = classes + " " + SpecialSquawks[tableplane.squawk].cssClass;
                                 show_squawk_warning = true;
-			}			                
+			}
 
                         // ICAO doesn't change
                         tableplane.tr.cells[2].textContent = (tableplane.flight !== null ? tableplane.flight : "");
@@ -812,7 +908,7 @@ function resortTable() {
         }
 
         PlanesOrdered.sort(sortFunction);
-        
+
         var tbody = document.getElementById('tableinfo').tBodies[0];
         for (var i = 0; i < PlanesOrdered.length; ++i) {
                 tbody.appendChild(PlanesOrdered[i].tr);
@@ -856,7 +952,7 @@ function selectPlaneByHex(hex,autofollow) {
 		Planes[SelectedPlane].updateLines();
 		Planes[SelectedPlane].updateMarker();
                 $(Planes[SelectedPlane].tr).addClass("selected");
-	} else { 
+	} else {
 		SelectedPlane = null;
 	}
 
@@ -866,7 +962,7 @@ function selectPlaneByHex(hex,autofollow) {
                         GoogleMap.setZoom(8);
         } else {
                 FollowSelected = false;
-        } 
+        }
 
         refreshSelected();
 }
@@ -888,7 +984,7 @@ function resetMap() {
         // Set and refresh
 	GoogleMap.setZoom(ZoomLvl);
 	GoogleMap.setCenter(new google.maps.LatLng(CenterLat, CenterLon));
-	
+
 	selectPlaneByHex(null,false);
 }
 
@@ -901,12 +997,12 @@ function drawCircle(marker, distance) {
     if (isNaN(distance) || !isFinite(distance) || distance < 0) {
         return false;
     }
-    
+
     distance *= 1000.0;
     if (!Metric) {
         distance *= 1.852;
     }
-    
+
     // Add circle overlay and bind to marker
     var circle = new google.maps.Circle({
       map: GoogleMap,
