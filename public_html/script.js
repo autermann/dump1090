@@ -7,6 +7,7 @@ var Planes        = {};
 var PlanesOrdered = [];
 var SelectedPlane = null;
 var FollowSelected = false;
+var RangeFeature = null;
 
 var SpecialSquawks = {
         '7500' : { cssClass: 'squawk7500', markerColor: 'rgb(255, 85, 85)', text: 'Aircraft Hijacking' },
@@ -53,7 +54,6 @@ function create_range_updater(center_point, callback) {
   return function onNewPoint(point) {
     var distance = getDistance(center_point, point);
     var bearing = Math.round(getBearing(center_point, point)) % 360;
-    console.log("Distance:", distance, "Bearing:", bearing);
     if (distances[bearing] < distance) {
       distances[bearing] = distance;
       callback(buildPolygon(center_point, distances));
@@ -68,8 +68,8 @@ function create_range_updater(center_point, callback) {
                        Math.cos(φ1) * Math.sin(distance/R) * Math.cos(brng));
     var λ2 = λ1 + Math.atan2(Math.sin(brng) * Math.sin(distance/R) * Math.cos(φ1),
                              Math.cos(distance/R) - Math.sin(φ1) * Math.sin(φ2));
-    lon = (λ2 / (Math.PI / 180) + 540) % 360 - 180;
-    lat = φ2 / (Math.PI / 180);
+    var lon = (λ2 / (Math.PI / 180) + 540) % 360 - 180;
+    var lat = φ2 / (Math.PI / 180);
     return [lat, lon];
   }
 
@@ -173,8 +173,8 @@ function processReceiverUpdate(data) {
 		// Call the function update
 		plane.updateData(now, ac);
 
-        if (range_updater && data.lat !== undefined && data.lon !== undefined) {
-            range_updater([data.lat, data.lon]);
+        if (range_updater && ac.lat !== undefined && ac.lon !== undefined) {
+            range_updater([ac.lat, ac.lon]);
         }
 	}
 }
@@ -392,17 +392,19 @@ function generic_gettile(template, coord, zoom) {
 }
 
 function draw_range_polygon(polygon) {
-    var geom = new ol.geom.Polygon([polygon.map(function(coordinate) {
-        return [coordinate[1], coordinate[0]];
-    })]).transform('EPSG:4326', 'EPSG:3857');
-
-    var feature = new ol.Feature({
-        geometry: geom
+    if (RangeFeature) {
+        RangeFeature.setMap(null);
+    }
+    RangeFeature = new google.maps.Polygon({
+        geodesic: true,
+        clickable: false,
+        fillColor: '#888888',
+        fillOpacity: 0.6,
+        map: GoogleMap,
+        paths: polygon.map(function(c) {
+            return { lat: c[0], lng: c[1] };
+        })
     });
-    feature.setStyle(new ol.style.Style({
-        fill: new ol.style.Fill({ color: [150, 150, 150, 0.5] })
-    }));
-    StaticFeatures.setAt(StaticFeatures.getLength()-1, feature);
 }
 
 // Initalizes the map and starts up our timers to call various functions
